@@ -1,17 +1,13 @@
-from transformers import AutoTokenizer, AutoModelForSequenceClassification, Trainer, TrainingArguments
-import pandas as pd
-import numpy as np
 import torch
 from Modeling.model_loader import ModelLoader
 
 def predict_lables(df, model_path):
-    tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False)
-    model = AutoModelForSequenceClassification.from_pretrained(model_path, num_labels=2)
-    model.eval()  # Set model to evaluation mode
+    loader = ModelLoader(model_path)
+    tokenizer, model = loader.load_model()
 
-    texta = df["normalized_keywords"].tolist()
+    texts = df["normalized_keywords"].astype(str).tolist()
     inputs = tokenizer(
-        texta,
+        texts,
         padding=True,
         truncation=True,
         max_length=128,
@@ -23,6 +19,7 @@ def predict_lables(df, model_path):
         logits = outputs.logits
         predictions = torch.argmax(logits, dim=-1).cpu().numpy()
 
-    df["predicted_sub_category"] = predictions.numpy()
+    df["predicted_sub_category"] = predictions
     return df
+
 
