@@ -84,14 +84,19 @@ def predict_labels(df, tokenizer, model, label_map):
     batch_size = 64
     for i in range(0, len(texts), batch_size):
         batch = texts[i:i+batch_size]
+        #tokenize voi BERT
+        #attention mask = danh dau vi tri that
         inputs = tokenizer(batch, padding=True, truncation=True, max_length=128, return_tensors="pt")
         inputs = {k: v.to(device) for k, v in inputs.items()}
         with torch.no_grad():
             logits = model(**inputs).logits
+            #Dung argmax lay diem cao nhat
             batch_preds = torch.argmax(logits, dim=-1).cpu().tolist()
             predictions.extend(batch_preds)
 
     df["predicted_label"] = predictions
+    #dict anh xa tu so -> ten
+    #{0: "Thể thao", 1: "Tin tức", 2: "Thiếu nhi", ...}
     df["pre_sub_category"] = [label_map.get(pred, "unknown") for pred in predictions]
     return df
 
