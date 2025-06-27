@@ -1,9 +1,5 @@
-import os
-import torch
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
-
 class ModelLoader:
-    def __init__(self, model_path="bert-base-multilingual-cased", device=None):
+    def __init__(self, model_path="distilbert-base-multilingual-cased", device=None):
         self.model_path = model_path
         self.device = device if device else ("cuda" if torch.cuda.is_available() else "cpu")
         self.tokenizer = None
@@ -12,7 +8,6 @@ class ModelLoader:
     def load_model(self):
         print(f"Loading model from {self.model_path}...")
 
-        # Load from local if it's a folder, otherwise from Hugging Face
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_path, use_fast=False)
         self.model = AutoModelForSequenceClassification.from_pretrained(self.model_path)
         self.model.to(self.device)
