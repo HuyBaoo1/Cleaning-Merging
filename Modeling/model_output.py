@@ -1,27 +1,38 @@
-import os
-import torch
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
+def main():
+    file_path = "/content/DatasetFPT.xlsx"
+    sheet_name = "Clean Title"
 
-class ModelLoader:
-    def __init__(self, model_path="bert-base-multilingual-cased", device=None):
-        self.model_path = model_path
-        self.device = device if device else ("cuda" if torch.cuda.is_available() else "cpu")
-        self.tokenizer = None
-        self.model = None
+    if not os.path.exists(file_path):
+        print(f"Error: The file was not found at {file_path}.")
+        print("Please ensure the file is uploaded to the /content/ directory or the path is correct.")
+        return
+    if not os.path.isfile(file_path):
+        print(f"Error: The path {file_path} exists but is not a file.")
+        return
 
-    def load_model(self):
-        print(f"Loading model from {self.model_path}...")
+    # Load titles
+    try:
+        # Specify the engine explicitly
+        titles_df = pd.read_excel(file_path, sheet_name=sheet_name, engine='openpyxl')
+        print("File loaded successfully.")
+    except Exception as e:
+        print(f"Error loading Excel file: {e}")
+        return
 
-        # Load from local if it's a folder, otherwise from Hugging Face
-        self.tokenizer = AutoTokenizer.from_pretrained(self.model_path, use_fast=False)
-        self.model = AutoModelForSequenceClassification.from_pretrained(self.model_path)
-        self.model.to(self.device)
-        self.model.eval()
 
-        return self.tokenizer, self.model
+    titles_df["title"] = titles_df["title"].fillna("").astype(str)
+    titles_df["title_en"] = titles_df[ "title_en"].fillna("").astype(str)
+    titles_df["normalized_title"] = titles_df["normalized_title"].fillna("").astype(str)
+    titles_df["sub_category"] = titles_df["sub_category"].fillna("").astype(str)
 
-    def save_model(self, model, tokenizer):
-        print(f"Saving model to {self.model_path}...")
-        tokenizer.save_pretrained(self.model_path)
-        model.save_pretrained(self.model_path)
-        print("Model saved successfully.")
+
+    # Train classifier and save to model_output
+    print("Training classifier...")
+    output_path, label_encoder = train_classifier(titles_df)
+
+    predicted_df = predict_lables(titles_df, output_path)
+
+    print(f"Model saved to: {output_path}")
+
+if __name__ == "__main__":
+    main()
