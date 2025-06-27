@@ -1,3 +1,4 @@
+# Required imports
 import os
 import sys
 import joblib
@@ -96,7 +97,7 @@ def predict_labels(df, tokenizer, model, label_map):
 
 
 class KeywordMatcher:
-    def __init__(self, tokenizer, model, title_embeddings, titles_df, device):
+    def __init__(self, tokenizer, model, title_embeddings, titles_df, device, fallback_to_all_titles=True):
         self.tokenizer = tokenizer
         self.model = model
         self.title_embeddings = title_embeddings
@@ -120,31 +121,31 @@ class KeywordMatcher:
     def match_keywords_to_titles(self, keywords_df, top_k=1, threshold=0.75):
         keywords_df["pre_sub_category"] = keywords_df["pre_sub_category"].str.strip().str.lower()
         self.titles_df["sub_category"] = self.titles_df["sub_category"].str.strip().str.lower()
-        keyword_embeddings = self.encode_texts(keywords_df["normalized_keywords"].tolist())
 
-        skipped = 0
-        matched = 0
+        keyword_embeddings = self.encode_texts(keywords_df["normalized_keywords"].tolist())
+        results = []
 
         for idx, row in keywords_df.iterrows():
+            keyword_text = row["normalized_keywords"]
             keyword_vec = keyword_embeddings[idx].unsqueeze(0)
             sub_cat = row["pre_sub_category"]
-            #Loc titles theo sub_category
+
             sub_indices = self.titles_df.index[self.titles_df["sub_category"] == sub_cat].tolist()
+            current_embeddings = self.title_embeddings[sub_indices] if sub_indices else self.title_embeddings
+            current_titles_df = self.titles_df.iloc[sub_indices] if sub_indices else self.titles_df
 
-            current_embeddings = self.title_embeddings if not sub_indices else self.title_embeddings[sub_indices]
+            similarities = cosine_similarity(keyword_vec.numpy(), current_embeddings.numpy()).flatten()
 
-            similarities = cosine_similarity(keyword_vec.numpy(), current_title_embeddings.numpy()).flatten()
+            above_threshold_indices = [i for i, score in enumerate(similarities) if score >= threshold]
+            if not above_threshold_indices and not self.fallback_to_all_titles:
+                continue
 
-            above_threshold_indices_relative = [i for i, score in enumerate(similarities) if score >= threshold]
-            top_indices_relative = [above_threshold_indices_relative[i] for i in similarities[above_threshold_indices_relative].argsort()[::-1][:top_k]
-            top_indices_original = [sub_titles_df_indices[i] for i in top_indices_relative]
-            #np.argsort returns indices that sort in ascending order, so we reverse it [::-1] to get top_k highest scores
-      
-            results = []
-            for top_i_original in top_indices_original:
-                sim_score = similarities[keyword_vec.numpy(), self.title_embeddings[top_i_original].unsqueeze(0).numpy()).flatten()[0]
-                original_index = sub_indices[rel_idx] if sub_indices else rel_idx
-                matched_row = self.titles_df.iloc[original_index]
+            sorted_indices = np.argsort(similarities[above_threshold_indices])[::-1][:top_k]
+            top_indices = [above_threshold_indices[i] for i in sorted_indices]
+
+            for rel_idx in top_indices:
+                matched_row = current_titles_df.iloc[rel_idx]
+                sim_score = similarities[rel_idx]
                 results.append({
                     "keyword": keyword_text,
                     "matched_title": matched_row.get("normalized_title", matched_row["title"] + " " + matched_row["title_en"]),
@@ -152,17 +153,18 @@ class KeywordMatcher:
                     "original_title_en": matched_row["title_en"],
                     "category": matched_row["category"],
                     "sub_category": matched_row["sub_category"],
-                    "pre_sub_category": row["pre_sub_category"],
-                    "similarity": float(score)
-              
+                    "pre_sub_category": sub_cat,
+                    "similarity": float(sim_score)
                 })
-                matched += 1
+
         return pd.DataFrame(results)
+
 
 def load_clean_data(file_path, keyword_sheet, title_sheet):
     keywords_df = pd.read_excel(file_path, sheet_name=keyword_sheet)
     titles_df = pd.read_excel(file_path, sheet_name=title_sheet)
     return keywords_df, titles_df
+
 
 def prepare_data(keywords_df, titles_df):
     keywords_df['normalized_keywords'] = keywords_df['normalized_keywords'].fillna('').astype(str).str.strip()
@@ -172,6 +174,7 @@ def prepare_data(keywords_df, titles_df):
     titles_df['category'] = titles_df['category'].fillna('').astype(str)
     titles_df['sub_category'] = titles_df['sub_category'].fillna('').astype(str)
     return keywords_df, titles_df
+
 
 def encode_titles(titles, tokenizer, model, device):
     model.to(device).eval()
@@ -186,6 +189,7 @@ def encode_titles(titles, tokenizer, model, device):
             embeddings.append(emb)
     return torch.cat(embeddings)
 
+
 def aggregate_results(df):
     if df.empty:
         return pd.DataFrame()
@@ -195,6 +199,7 @@ def aggregate_results(df):
         min_similarity=("similarity", "min"),
         max_similarity=("similarity", "max")
     ).reset_index()
+
 
 def save_to_excel(df, file_path, sheet_name):
     with ExcelWriter(file_path, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
@@ -221,7 +226,7 @@ def main():
     title_embeddings = encode_titles(df_titles["normalized_title"].tolist(), tokenizer, base_model, device)
 
     matcher = KeywordMatcher(tokenizer, base_model, title_embeddings, df_titles, device)
-    matched_df = matcher.match(df_keywords)
+    matched_df = matcher.match_keywords_to_titles(df_keywords)
 
     summary_df = aggregate_results(matched_df)
 
@@ -229,6 +234,7 @@ def main():
     save_to_excel(summary_df, file_path, "Summary")
 
     print(f"Matching completed. Total matched: {len(matched_df)}")
+
 
 if __name__ == "__main__":
     main()
