@@ -1,25 +1,32 @@
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
 import torch
-from Modeling.model_loader import ModelLoader
+import pandas as pd
 
-def predict_lables(df, model_path):
-    loader = ModelLoader(model_path)
-    tokenizer, model = loader.load_model()
+def predict_lables(df_keywords, tokenizer, model, label_map):
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model.to(device)
+    model.eval()
 
-    texts = df["normalized_keywords"].astype(str).tolist()
-    inputs = tokenizer(
-        texts,
-        padding=True,
-        truncation=True,
-        max_length=128,
-        return_tensors="pt"
-    )
+    df = df.copy()
+    df["normalized_keywords"] = df["normalized_keywords"].astype(str).fillna("").str.strip()
 
-    with torch.no_grad():
-        outputs = model(**inputs)
-        logits = outputs.logits
-        predictions = torch.argmax(logits, dim=-1).cpu().numpy()
+    batch_size = 64
+    texts = df["normalized_keywords"].tolist()
+    predictions = []
 
-    df["predicted_sub_category"] = predictions
+    for i in range(0, len(texts), batch_size):
+        batch = texts[i:i+batch_size]
+        inputs = tokenizer(batch, padding=True, truncation=True, max_length=128, return_tensors="pt")
+        inputs = {k: v.to(device) for k, v in inputs.items()}
+
+        with torch.no_grad():
+            logits = model(**inputs).logits
+            batch_preds = torch.argmax(logits, dim=-1).cpu().numpy().tolist()
+            predictions.extend(batch_preds)
+
+
+    df["predicted_label"]= predictions
+    df["pre_sub_category"] = [label_map.get(pred, "unknown") for pred in predictions]
+
+    print("Prediction completed")
     return df
-
-
