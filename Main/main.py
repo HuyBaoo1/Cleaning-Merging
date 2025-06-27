@@ -10,62 +10,79 @@ from Matching.result_aggregator import aggregate_results
 from Output.saver import save_to_excel
 from Modeling.model_predictor import predict_lables  
 
-def load_clean_data(file_path, keyword_sheet, title_sheet):
-    print("Loading cleaned data...")
-    try:
-        keywords_df = pd.read_excel(file_path, sheet_name=keyword_sheet)
-        titles_df = pd.read_excel(file_path, sheet_name=title_sheet)
-        return keywords_df, titles_df
-    except Exception as e:
-        raise RuntimeError(f"Failed to load Excel sheets: {e}")
-
-def prepare_data(keywords_df, titles_df):
-
-    print("Preprocessing data...")
-
-    # Clean keyword data
-    keywords_df['normalized_keywords'] = keywords_df.get('normalized_keywords', '').fillna('').astype(str).str.strip()
-
-    # Clean title data
-    titles_df['title'] = titles_df.get('title', '').fillna('').astype(str).str.strip()
-    titles_df['title_en'] = titles_df.get('title_en', '').fillna('').astype(str).str.strip()
-    titles_df['normalized_title'] = titles_df.get('normalized_title', '').fillna('').astype(str).str.strip()
-    titles_df['combined_title'] = (titles_df['title'] + ' ' + titles_df['title_en']).str.lower()
-    titles_df['sub_category'] = titles_df.get('sub_category', '').fillna('').astype(str).str.strip().str.lower()
-    titles_df['category'] = titles_df.get('category', '').fillna('').astype(str).str.strip()
-
-    return keywords_df, titles_df
-
 def main():
-    file_path = "C:/Users/ASUS/Downloads/Data/Raw/DatasetFPT.xlsx"
+    file_path = "/content/DatasetFPT.xlsx"
+    sheet_name = "Clean Title"
     keyword_sheet = "Clean Keyword"
-    title_sheet = "Clean Title"
-    output_dir = "Output"
-    os.makedirs(output_dir, exist_ok=True)
 
-    df_keywords, df_titles = load_clean_data(file_path, keyword_sheet, title_sheet)
+    if not os.path.exists(file_path):
+        print(f"Error: The file was not found at {file_path}.")
+        print("Please ensure the file is uploaded to the /content/ directory or the path is correct.")
+        return
+    if not os.path.isfile(file_path):
+        print(f"Error: The path {file_path} exists but is not a file.")
+        return
 
-    df_keywords = df_keywords.head(100)
-    df_titles = df_titles.head(100)
+    # Load titles
+    try:
+        # Specify the engine explicitly
+        titles_df = pd.read_excel(file_path, sheet_name=sheet_name, engine='openpyxl')
+        keywords_df = pd.read_excel(file_path, sheet_name=keyword_sheet, engine="openpyxl")
+        print("File loaded successfully.")
+    except Exception as e:
+        print(f"Error loading Excel file: {e}")
+        return
+
+    titles_df = titles_df[titles_df["category"].str.lower() == "anime"]
 
 
-    df_keywords, df_titles = prepare_data(df_keywords, df_titles)
+    titles_df["title"] = titles_df["title"].fillna("").astype(str)
+    titles_df["title_en"] = titles_df[ "title_en"].fillna("").astype(str)
+    titles_df["normalized_title"] = titles_df["normalized_title"].fillna("").astype(str)
+    titles_df["sub_category"] = titles_df["sub_category"].fillna("").astype(str)
+    keywords_df["normalized_keywords"] = keywords_df["normalized_keywords"].fillna("").astype(str)
 
-    print("Predicting sub-categories for keywords...")
-    model_path = "Modeling/model_output"  # Local path to fine-tuned BERT model
-    df_keywords = predict_lables(df_keywords, model_path)
 
-    print("Matching keywords to titles using Option B...")
-    matcher = KeywordMatcher()  # PhoBERT still used for similarity unless replaced
-    matches_df = matcher.match_keywords_to_titles(df_keywords, df_titles, top_k=1, threshold=0.6)
+    # Train classifier and save to model_output
+    print("Training classifier...")
+    output_path, label_encoder = train_classifier(titles_df)
+    print(f"Loading saved model components from {output_path}...")
 
-    print("Aggregating results...")
-    summary_df = aggregate_results(matches_df)
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(output_path)
+        model = AutoModelForSequenceClassification.from_pretrained(output_path)
+        label_encoder = joblib.load(os.path.join(output_path, "label_encoder.pkl"))
+        label_map = {i: label for i, label in enumerate(label_encoder.classes_)}
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        model.to(device)
+        model.eval()
+        print("Saved model components loaded successfully.")
+    except FileNotFoundError as e:
+        print(f"Error loading saved model components: {e}. Please ensure the model was trained and saved correctly to {output_path}.")
+        return
+    except Exception as e:
+        print(f"An error occurred while loading saved model components: {e}")
+        return
 
-    print("Saving results to Excel...")
-    save_to_excel(matches_df, file_path, sheet_name="Matches")
-    save_to_excel(summary_df, file_path, sheet_name="Summary")
-    print("Done.")
+
+    print("Predicting labels for titles...")
+    #titles_df_for_prediction = titles_df.copy()
+    #titles_df_for_prediction = titles_df_for_prediction.rename(columns={"normalized_title": "normalized_keywords"})
+    #predicted_df = predict_lables(titles_df_for_prediction, tokenizer, model, label_map) # Correctly pass all arguments
+
+    sample_df = keywords_df.sample(n=10, random_state=42).copy()
+
+    predicted_sample = predict_lables(sample_df, tokenizer, model, label_map)
+    anime_subcategories = titles_df["sub_category"].str.lower().unique()
+    predicted_sample = predicted_sample[
+    predicted_sample["pre_sub_category"].str.lower().isin(anime_subcategories)]
+
+
+    print("Prediction for titles completed.")
+    print("Sample predictions:")
+    display(predicted_sample.head())
+
+    print(f"Model saved to: {output_path}")
 
 if __name__ == "__main__":
     main()
